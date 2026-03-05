@@ -5,7 +5,7 @@
 의사결정자의 Slack 대화 기록을 학습하여, 팀원들의 질문에 의사결정자의 사고 방식으로 답변하는 B2B SaaS Slack 봇입니다.
 
 - **랜딩 페이지:** https://slough-lp.vercel.app
-- **기술명세서:** https://bit.ly/slough_ai_tech_doc
+- **기술명세서:** https://bit.ly/slough_ai_tech_docs
 - **Slack 앱 설치:** https://dylcsnb4u0bo.cloudfront.net/slack/install
 - **데모 워크스페이스:** https://join.slack.com/t/isfet/shared_invite/zt-3qneskbtv-dHWGw2T0sEged3rSREYiAw
 
