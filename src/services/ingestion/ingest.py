@@ -136,6 +136,13 @@ def run_ingestion(team_id: str, channel_ids: list[str] | None = None, incrementa
     if not all_messages:
         with get_db() as db:
             mark_job_completed(db, job_id, total_messages=0, processed_messages=0)
+        # Still re-extract persona even with 0 new messages (prompt may have changed)
+        try:
+            from src.services.ai.persona_extractor import extract_persona
+            extract_persona(str(workspace_id))
+            logger.info("Persona re-extracted (0 new messages) for workspace %s", workspace_id)
+        except Exception:
+            logger.exception("Persona extraction failed for workspace %s", workspace_id)
         _notify_completion(client, decision_maker_id, 0, 0)
         return
 
