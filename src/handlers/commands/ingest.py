@@ -25,6 +25,8 @@ def register(app):
 
         team_id = command.get("team_id", "")
         user_id = command.get("user_id", "")
+        cmd_text = (command.get("text") or "").strip().lower()
+        is_full = cmd_text == "full"
 
         # Look up workspace
         try:
@@ -47,23 +49,40 @@ def register(app):
                     respond(text="⏳ 이미 학습이 진행 중입니다. 완료될 때까지 기다려 주세요.")
                     return
 
+                # Full re-ingest: delete existing embeddings first
+                if is_full:
+                    from src.services.db.models import Embedding
+                    deleted = db.query(Embedding).filter(
+                        Embedding.workspace_id == workspace_id,
+                    ).delete()
+                    db.commit()
+                    logger.info("Full re-ingest: deleted %d embeddings for workspace %s", deleted, workspace_id)
+
         except Exception:
             logger.exception("DB error during /slough-ingest")
             respond(text="❌ 데이터베이스 오류가 발생했습니다.")
             return
 
-        # Start ingestion in background
-        respond(
-            text=(
-                "📚 증분 학습을 시작합니다!\n"
-                "이전 학습 이후 새로운 메시지만 가져옵니다.\n"
-                "완료되면 DM으로 알려드리겠습니다."
-            ),
-        )
+        if is_full:
+            respond(
+                text=(
+                    "🔄 전체 재학습을 시작합니다!\n"
+                    "기존 학습 데이터를 초기화하고 모든 메시지를 다시 학습합니다.\n"
+                    "완료되면 DM으로 알려드리겠습니다."
+                ),
+            )
+        else:
+            respond(
+                text=(
+                    "📚 증분 학습을 시작합니다!\n"
+                    "이전 학습 이후 새로운 메시지만 가져옵니다.\n"
+                    "완료되면 DM으로 알려드리겠습니다."
+                ),
+            )
 
         threading.Thread(
             target=run_ingestion,
             args=(team_id,),
-            kwargs={"incremental": True},
+            kwargs={"incremental": not is_full},
             daemon=True,
         ).start()
