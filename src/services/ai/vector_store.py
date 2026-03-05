@@ -18,7 +18,7 @@ def search_similar(
     query: str,
     k: int = 5,
     threshold: float = 0.3,
-) -> list[str]:
+) -> list[tuple[str, float]]:
     """Search for the top-k most similar embeddings with time-weighted scoring.
 
     Combines cosine similarity with a time decay factor so that recent
@@ -33,7 +33,7 @@ def search_similar(
                    threshold are excluded even if they are in the top-k.
 
     Returns:
-        List of content strings from the most relevant embeddings.
+        List of (content, final_score) tuples from the most relevant embeddings.
     """
     query_embedding = embed_text(query)
 
@@ -82,7 +82,7 @@ def search_similar(
     else:
         logger.info("Vector search: 0 results above threshold %.2f", threshold)
 
-    return [row[0] for row in results]
+    return [(row[0], row[3]) for row in results]  # (content, final_score)
 
 
 def store_embeddings(

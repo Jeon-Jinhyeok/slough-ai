@@ -147,15 +147,26 @@ def retrieve(state: AgentState) -> dict:
     question = state["question"]
 
     try:
-        docs = search_similar(
+        results = search_similar(
             workspace_id=workspace_id,
             query=question,
             k=8,
             threshold=0.3,
         )
+        # Annotate each doc with relevance level for the LLM
+        annotated = []
+        for content, score in results:
+            if score > 0.5:
+                label = "[높은 관련성]"
+            elif score >= 0.35:
+                label = "[관련성 있음]"
+            else:
+                label = "[낮은 관련성]"
+            annotated.append(f"{label}\n{content}")
+
         return {
-            "context": docs,
-            "sources_used": len(docs),
+            "context": annotated,
+            "sources_used": len(results),
         }
     except Exception:
         logger.exception("Vector search failed")

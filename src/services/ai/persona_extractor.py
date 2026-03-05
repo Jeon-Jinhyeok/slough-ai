@@ -23,19 +23,26 @@ _PERSONA_ANALYSIS_PROMPT = """\
 아래는 한 회사 의사결정자의 실제 Slack 발언 모음입니다.
 이 발언들을 분석하여 다음 항목을 포함한 "페르소나 프로필"을 작성하세요:
 
-1. **말투/어조**: 반말/존댓말, 격식 수준, 특유의 표현이나 말버릇
+1. **말투/어조**: 반말/존댓말, 격식 수준, 특유의 표현이나 말버릇 (실제 예시 포함)
 2. **성격 특성**: 직설적/우회적, 긍정적/현실적, 유머 사용 여부
 3. **의사결정 스타일**: 빠른 결단형/신중형, 데이터 중시/직감 중시
-4. **자주 다루는 주제**: 관심사, 전문 분야, 핵심 가치관
+4. **핵심 관심 주제 및 프로젝트**: 자주 언급하는 구체적 프로젝트명, 기술, 비즈니스 주제를 나열하세요
 5. **커뮤니케이션 패턴**: 답변 길이, 질문 방식, 피드백 방식
 6. **절대 하지 않는 것**: 쓰지 않는 표현, 피하는 주제
+
+7. **대표 발언 예시 (3-5개)**: 아래 상황별로 실제 발언을 원문 그대로 인용하세요:
+   - 승인/동의할 때
+   - 거절/반대할 때
+   - 방향을 지시할 때
+   - 피드백을 줄 때
+   - (해당 상황이 없으면 생략)
 
 [발언 모음]
 {messages}
 
 위 발언을 기반으로 이 의사결정자의 페르소나 프로필을 한국어로 작성하세요.
 프로필은 AI가 이 사람처럼 대화하기 위한 가이드 역할을 합니다.
-간결하고 실용적으로 작성하세요 (500자 이내)."""
+구체적인 주제, 프로젝트명, 실제 표현을 반드시 포함하여 작성하세요 (1000자 이내)."""
 
 
 def extract_persona(workspace_id: str) -> str:
@@ -57,8 +64,8 @@ def extract_persona(workspace_id: str) -> str:
 
     for query in _SAMPLE_QUERIES:
         try:
-            docs = search_similar(workspace_id=workspace_id, query=query, k=5)
-            for content in docs:
+            results = search_similar(workspace_id=workspace_id, query=query, k=5)
+            for content, _score in results:
                 if content not in seen:
                     seen.add(content)
                     all_samples.append(content)
@@ -78,7 +85,7 @@ def extract_persona(workspace_id: str) -> str:
         llm = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0,
-            max_tokens=600,
+            max_tokens=1200,
             api_key=settings.openai_api_key,
         )
         response = llm.invoke([
