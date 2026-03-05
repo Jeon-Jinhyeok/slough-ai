@@ -93,7 +93,8 @@ def _build_en(role: str) -> list[dict]:
                     '  "직접 수정" — Edit the answer yourself and send the corrected version\n'
                     '  "주의 필요" — Answer needs caution, employee is warned\n\n'
                     "  *Commands:*\n"
-                    "  `/slough-ingest` — Learn new messages since last ingestion"
+                    "  `/slough-ingest` — Learn new messages since last ingestion\n"
+                    "  `/slough-ingest full` — Re-learn everything from scratch"
                 ),
             },
         })
@@ -109,6 +110,7 @@ def _build_en(role: str) -> list[dict]:
                     "  `/slough-rule list` — List rules\n"
                     "  `/slough-rule delete [ID]` — Delete a rule\n"
                     "  `/slough-ingest` — Learn new messages since last ingestion\n"
+                    "  `/slough-ingest full` — Re-learn everything from scratch\n"
                     "  `/slough-stats` — This week's live stats"
                 ),
             },
@@ -168,7 +170,8 @@ def _build_kr(role: str) -> list[dict]:
                     '  "직접 수정" — 답변을 수정하여 직원에게 전달\n'
                     '  "주의 필요" — 답변에 주의가 필요함을 직원에게 알림\n\n'
                     "  *명령어:*\n"
-                    "  `/slough-ingest` — 새 메시지 추가 학습"
+                    "  `/slough-ingest` — 새 메시지 추가 학습\n"
+                    "  `/slough-ingest full` — 전체 재학습 (처음부터 다시)"
                 ),
             },
         })
@@ -184,6 +187,7 @@ def _build_kr(role: str) -> list[dict]:
                     "  `/slough-rule list` — 규칙 목록\n"
                     "  `/slough-rule delete [ID]` — 규칙 삭제\n"
                     "  `/slough-ingest` — 새 메시지 추가 학습\n"
+                    "  `/slough-ingest full` — 전체 재학습 (처음부터 다시)\n"
                     "  `/slough-stats` — 이번 주 실시간 현황"
                 ),
             },
