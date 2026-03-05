@@ -60,6 +60,10 @@ def list_bot_channels(client: WebClient) -> list[dict]:
     return channels
 
 
+_SHORT_MSG_THRESHOLD = 80  # chars — short DM messages get surrounding context
+_CONTEXT_WINDOW = 3  # preceding messages to include for context
+
+
 def fetch_channel_history(
     client: WebClient,
     channel_id: str,
@@ -73,6 +77,10 @@ def fetch_channel_history(
     Paginates through the full history (or from `oldest` timestamp).
     Only includes messages with text content from the decision-maker.
 
+    For short decision-maker messages (< 80 chars) in the main channel flow,
+    preceding messages are included as context so that replies like "동의합니다"
+    retain what was agreed to.  The decision-maker's message is always primary.
+
     Args:
         client: Slack WebClient with bot token.
         channel_id: Channel to fetch from.
@@ -85,7 +93,9 @@ def fetch_channel_history(
         List of dicts matching the AI contract format:
         [{"text": str, "channel": str, "ts": str, "thread_ts"?: str}]
     """
-    messages = []
+    # First pass: collect ALL messages (not just DM) for context lookback.
+    # conversations.history returns newest-first, so higher indices = older.
+    all_raw: list[dict] = []
     cursor = None
 
     while True:
@@ -103,52 +113,67 @@ def fetch_channel_history(
         except SlackApiError as e:
             if e.response.get("error") == "not_in_channel":
                 logger.warning("Bot not in channel %s, skipping", channel_id)
-                return messages
+                return []
             logger.exception("Failed to fetch history for channel %s", channel_id)
             break
 
-        for msg in resp.get("messages", []):
-            # Only decision-maker's messages with actual text
-            if msg.get("user") != decision_maker_id:
-                continue
-            if not msg.get("text"):
-                continue
-            # Skip bot messages and system messages
-            if msg.get("subtype"):
-                continue
-
-            text = msg["text"]
-
-            # If this is a thread reply, fetch the parent message for Q&A context
-            if msg.get("thread_ts") and msg["thread_ts"] != msg["ts"]:
-                try:
-                    thread = client.conversations_replies(
-                        channel=channel_id, ts=msg["thread_ts"], limit=1,
-                    )
-                    parent = thread["messages"][0] if thread.get("messages") else None
-                    if parent and parent.get("user") != decision_maker_id and parent.get("text"):
-                        text = f"[질문] {parent['text']}\n[답변] {msg['text']}"
-                except Exception:
-                    # Fall back to standalone message on error
-                    pass
-
-            # Prepend channel name for context (e.g. "[#dev-planning] ...")
-            if channel_name:
-                text = f"[#{channel_name}] {text}"
-
-            entry = {
-                "text": text,
-                "channel": channel_id,
-                "ts": msg["ts"],
-            }
-            if msg.get("thread_ts") and msg["thread_ts"] != msg["ts"]:
-                entry["thread_ts"] = msg["thread_ts"]
-            messages.append(entry)
+        all_raw.extend(resp.get("messages", []))
 
         cursor = resp.get("response_metadata", {}).get("next_cursor")
         if not cursor:
             break
         time.sleep(_PAGE_DELAY_SECONDS)
+
+    # Second pass: filter DM messages, add surrounding context for short ones.
+    messages = []
+
+    for i, msg in enumerate(all_raw):
+        if msg.get("user") != decision_maker_id:
+            continue
+        if not msg.get("text"):
+            continue
+        if msg.get("subtype"):
+            continue
+
+        text = msg["text"]
+        is_thread_reply = msg.get("thread_ts") and msg["thread_ts"] != msg["ts"]
+
+        # Thread reply: fetch parent for Q&A context (existing logic)
+        if is_thread_reply:
+            try:
+                thread = client.conversations_replies(
+                    channel=channel_id, ts=msg["thread_ts"], limit=1,
+                )
+                parent = thread["messages"][0] if thread.get("messages") else None
+                if parent and parent.get("user") != decision_maker_id and parent.get("text"):
+                    text = f"[질문] {parent['text']}\n[답변] {msg['text']}"
+            except Exception:
+                pass
+
+        # Short non-thread message: add preceding messages as context.
+        # all_raw is newest-first, so i+1, i+2, ... are older (came before).
+        elif len(msg["text"]) < _SHORT_MSG_THRESHOLD:
+            preceding: list[str] = []
+            for j in range(i + 1, min(i + 1 + _CONTEXT_WINDOW, len(all_raw))):
+                prev = all_raw[j]
+                if prev.get("text") and not prev.get("subtype"):
+                    preceding.append(prev["text"])
+            if preceding:
+                preceding.reverse()  # chronological order (oldest first)
+                context_text = "\n".join(preceding)
+                text = f"[맥락]\n{context_text}\n[의사결정자 답변] {msg['text']}"
+
+        if channel_name:
+            text = f"[#{channel_name}] {text}"
+
+        entry = {
+            "text": text,
+            "channel": channel_id,
+            "ts": msg["ts"],
+        }
+        if is_thread_reply:
+            entry["thread_ts"] = msg["thread_ts"]
+        messages.append(entry)
 
     logger.info(
         "Fetched %d decision-maker messages from channel %s",
