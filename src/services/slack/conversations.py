@@ -64,6 +64,93 @@ _SHORT_MSG_THRESHOLD = 80  # chars — short DM messages get surrounding context
 _CONTEXT_WINDOW = 3  # preceding messages to include for context
 
 
+def resolve_user_names(client: WebClient, user_ids: set[str]) -> dict[str, str]:
+    """Resolve Slack user IDs to display names.
+
+    Args:
+        client: Slack WebClient with bot token.
+        user_ids: Set of Slack user IDs to resolve.
+
+    Returns:
+        Mapping of user_id -> display name. Falls back to user_id on error.
+    """
+    names: dict[str, str] = {}
+    for uid in user_ids:
+        try:
+            resp = client.users_info(user=uid)
+            profile = resp["user"].get("profile", {})
+            name = (
+                profile.get("display_name")
+                or profile.get("real_name")
+                or resp["user"].get("name", uid)
+            )
+            names[uid] = name
+        except Exception:
+            names[uid] = uid
+        time.sleep(0.1)  # rate limit courtesy
+    logger.info("Resolved %d user names", len(names))
+    return names
+
+
+def fetch_channel_messages_raw(
+    client: WebClient,
+    channel_id: str,
+    oldest: float = 0,
+    limit_per_page: int = 200,
+) -> list[dict]:
+    """Fetch ALL messages from a channel in chronological order.
+
+    Returns all non-system text messages (from all users), sorted oldest-first.
+    Used by the contextualizer to read the full conversation flow.
+
+    Args:
+        client: Slack WebClient with bot token.
+        channel_id: Channel to fetch from.
+        oldest: Unix timestamp - only fetch messages after this time.
+        limit_per_page: Messages per API call (max 200).
+
+    Returns:
+        List of raw Slack message dicts, sorted oldest-first.
+    """
+    all_raw: list[dict] = []
+    cursor = None
+
+    while True:
+        try:
+            kwargs: dict = {"channel": channel_id, "limit": limit_per_page}
+            if oldest:
+                kwargs["oldest"] = str(oldest)
+            if cursor:
+                kwargs["cursor"] = cursor
+            resp = client.conversations_history(**kwargs)
+        except SlackApiError as e:
+            if e.response.get("error") == "not_in_channel":
+                logger.warning("Bot not in channel %s, skipping", channel_id)
+                return []
+            logger.exception("Failed to fetch history for channel %s", channel_id)
+            break
+
+        all_raw.extend(resp.get("messages", []))
+
+        cursor = resp.get("response_metadata", {}).get("next_cursor")
+        if not cursor:
+            break
+        time.sleep(_PAGE_DELAY_SECONDS)
+
+    # Reverse to chronological order (API returns newest-first)
+    all_raw.reverse()
+
+    # Filter out system messages, keep only text messages
+    filtered = [
+        msg for msg in all_raw
+        if msg.get("text") and not msg.get("subtype")
+    ]
+    logger.info(
+        "Fetched %d raw messages from channel %s", len(filtered), channel_id,
+    )
+    return filtered
+
+
 def fetch_channel_history(
     client: WebClient,
     channel_id: str,

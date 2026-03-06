@@ -110,7 +110,7 @@ async def generate_answer_streaming(
 
 # ── 2. ingest_messages ───────────────────────────────────────────────
 
-_CHUNK_MAX_LENGTH = 1000  # characters per chunk
+_CHUNK_MAX_LENGTH = 2000  # characters per chunk (increased for contextualized messages)
 
 
 def _chunk_messages(messages: list[dict]) -> list[dict]:

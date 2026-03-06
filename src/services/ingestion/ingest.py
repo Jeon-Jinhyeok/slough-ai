@@ -8,6 +8,7 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 from src.services.ai import ingest_messages
+from src.services.ai.contextualizer import contextualize_messages
 from src.services.db.connection import get_db
 from src.services.db.ingestion_jobs import (
     create_ingestion_job,
@@ -18,9 +19,10 @@ from src.services.db.ingestion_jobs import (
 )
 from src.services.db.workspaces import get_workspace_by_team_id, update_workspace
 from src.services.slack.conversations import (
-    fetch_channel_history,
+    fetch_channel_messages_raw,
     join_channel,
     list_bot_channels,
+    resolve_user_names,
 )
 
 logger = logging.getLogger(__name__)
@@ -101,28 +103,29 @@ def run_ingestion(team_id: str, channel_ids: list[str] | None = None, incrementa
         _notify_completion(client, decision_maker_id, 0, 0)
         return
 
-    # 3. Fetch messages from each channel
+    # 3. Fetch raw messages, resolve user names, contextualize with LLM
     all_messages = []
     channels_processed = 0
 
-    for ch in channels:
-        logger.info("Ingesting #%s (%s)", ch["name"], ch["id"])
+    # Collect raw messages from all channels first
+    all_raw_by_channel: list[tuple[dict, list[dict]]] = []
+    all_user_ids: set[str] = set()
 
-        # Auto-join the channel before fetching history
+    for ch in channels:
+        logger.info("Fetching #%s (%s)", ch["name"], ch["id"])
+
         if not join_channel(client, ch["id"]):
             logger.warning("Could not join #%s, skipping", ch["name"])
             channels_processed += 1
             continue
 
         try:
-            msgs = fetch_channel_history(
-                client,
-                channel_id=ch["id"],
-                decision_maker_id=decision_maker_id,
-                oldest=oldest,
-                channel_name=ch["name"],
+            raw_msgs = fetch_channel_messages_raw(
+                client, channel_id=ch["id"], oldest=oldest,
             )
-            all_messages.extend(msgs)
+            if raw_msgs:
+                all_raw_by_channel.append((ch, raw_msgs))
+                all_user_ids.update(msg.get("user", "") for msg in raw_msgs)
         except Exception:
             logger.exception("Error fetching channel %s, continuing", ch["id"])
 
@@ -130,8 +133,30 @@ def run_ingestion(team_id: str, channel_ids: list[str] | None = None, incrementa
         with get_db() as db:
             update_ingestion_job(db, job_id, processed_channels=channels_processed)
 
+    # Resolve user names once for all channels
+    all_user_ids.discard("")
+    user_names = resolve_user_names(client, all_user_ids) if all_user_ids else {}
+    logger.info("Resolved %d user names", len(user_names))
+
+    # Contextualize each channel's messages with LLM
+    for ch, raw_msgs in all_raw_by_channel:
+        logger.info("Contextualizing #%s (%d messages)", ch["name"], len(raw_msgs))
+        try:
+            contextualized = asyncio.run(contextualize_messages(
+                raw_messages=raw_msgs,
+                decision_maker_id=decision_maker_id,
+                user_names=user_names,
+                channel_id=ch["id"],
+                channel_name=ch["name"],
+            ))
+            all_messages.extend(contextualized)
+        except Exception:
+            logger.exception(
+                "Contextualization failed for #%s, skipping", ch["name"],
+            )
+
     total_messages = len(all_messages)
-    logger.info("Collected %d messages from %d channels", total_messages, channels_processed)
+    logger.info("Contextualized %d message blocks from %d channels", total_messages, channels_processed)
 
     if not all_messages:
         with get_db() as db:
