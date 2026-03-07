@@ -95,44 +95,35 @@ def _parse_blocks(response_text: str) -> list[dict]:
     return blocks
 
 
-def _match_timestamp(
-    verbatim: str,
+def _get_dm_timestamps(
     raw_messages: list[dict],
     decision_maker_id: str,
-) -> str:
-    """Try to find the original Slack timestamp for a verbatim message.
-
-    Matches the first line of verbatim text against decision-maker messages.
-    Falls back to empty string if no match found.
-    """
-    # Build lookup from message text -> ts
-    text_to_ts: dict[str, str] = {}
-    for msg in raw_messages:
-        if msg.get("user") == decision_maker_id and msg.get("text"):
-            text_to_ts[msg["text"].strip()] = msg["ts"]
-
-    # Try matching the first line of verbatim text
-    first_line = verbatim.split("\n")[0].strip()
-    if first_line in text_to_ts:
-        return text_to_ts[first_line]
-
-    # Try matching the full verbatim (single message case)
-    if verbatim.strip() in text_to_ts:
-        return text_to_ts[verbatim.strip()]
-
-    return ""
+) -> list[str]:
+    """Extract decision-maker message timestamps in chronological order."""
+    return [
+        msg["ts"]
+        for msg in raw_messages
+        if msg.get("user") == decision_maker_id and msg.get("ts")
+    ]
 
 
 def _blocks_to_messages(
     blocks: list[dict],
     channel_id: str,
     channel_name: str,
-    raw_messages: list[dict],
-    decision_maker_id: str,
+    dm_timestamps: list[str],
 ) -> list[dict]:
-    """Convert parsed blocks into the ingestion message format."""
+    """Convert parsed blocks into the ingestion message format.
+
+    Assigns timestamps by position: blocks are produced in chronological
+    order by the LLM, matching the order of decision-maker messages.
+    Each block gets the timestamp of the corresponding DM message group.
+    """
     messages = []
-    for block in blocks:
+    n_blocks = len(blocks)
+    n_ts = len(dm_timestamps)
+
+    for i, block in enumerate(blocks):
         parts = []
         if channel_name:
             parts.append(f"[#{channel_name}]")
@@ -143,7 +134,14 @@ def _blocks_to_messages(
         parts.append(f"[의사결정자 원문] {block['verbatim']}")
 
         text = "\n".join(parts)
-        ts = _match_timestamp(block["verbatim"], raw_messages, decision_maker_id)
+
+        # Assign timestamp by position: distribute DM timestamps across blocks
+        if n_ts > 0 and n_blocks > 0:
+            # Map block index to timestamp index proportionally
+            ts_idx = min(i * n_ts // n_blocks, n_ts - 1)
+            ts = dm_timestamps[ts_idx]
+        else:
+            ts = ""
 
         messages.append({
             "text": text,
@@ -252,9 +250,9 @@ async def contextualize_messages(
 
             blocks = _parse_blocks(output)
 
+            dm_timestamps = _get_dm_timestamps(window, decision_maker_id)
             messages = _blocks_to_messages(
-                blocks, channel_id, channel_name,
-                window, decision_maker_id,
+                blocks, channel_id, channel_name, dm_timestamps,
             )
 
             # Dedup: overlapping windows may produce duplicate blocks
